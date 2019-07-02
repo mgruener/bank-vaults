@@ -348,6 +348,30 @@ func (v *vault) StepDownActive(address string) error {
 	return tmpClient.Sys().StepDown()
 }
 
+type VaultPolicy struct {
+	Name   string
+	Policy string
+}
+
+type VaultAuthMethod struct {
+	Type        string
+	Path        string
+	Description string
+	Config      map[string]interface{}
+	Roles       []map[string]interface{}
+
+	VaultGithubAuthMethod `mapstructure:",squash"`
+}
+
+type VaultGithubAuthMethod struct {
+	Mappings map[string]map[string]string `mapstructure:"map"`
+}
+
+type VaultExternalConfig struct {
+	Policies []VaultPolicy
+	Auth     []VaultAuthMethod
+}
+
 func (v *vault) Configure(config *viper.Viper) error {
 	logrus.Debugf("retrieving key from kms service...")
 
@@ -363,7 +387,14 @@ func (v *vault) Configure(config *viper.Viper) error {
 	defer v.cl.SetToken("")
 	defer func() { rootToken = nil }()
 
-	err = v.configureAuthMethods(config)
+	var externalConfig VaultExternalConfig
+
+	err = config.UnmarshalExact(&externalConfig)
+	if err != nil {
+		return fmt.Errorf("error unmarshalling external config for vault: %s", err.Error())
+	}
+
+	err = v.configureAuthMethods(externalConfig.Auth)
 	if err != nil {
 		return fmt.Errorf("error configuring auth methods for vault: %s", err.Error())
 	}
@@ -434,12 +465,7 @@ func (v *vault) kubernetesAuthConfigDefault() (map[string]interface{}, error) {
 	return config, err
 }
 
-func (v *vault) configureAuthMethods(config *viper.Viper) error {
-	authMethods := []map[string]interface{}{}
-	err := config.UnmarshalKey("auth", &authMethods)
-	if err != nil {
-		return fmt.Errorf("error unmarshalling vault auth methods config: %s", err.Error())
-	}
+func (v *vault) configureAuthMethods(authMethods []VaultAuthMethod) error {
 
 	existingAuths, err := v.cl.Sys().ListAuth()
 
@@ -448,58 +474,52 @@ func (v *vault) configureAuthMethods(config *viper.Viper) error {
 	}
 
 	for _, authMethod := range authMethods {
-		authMethodType, err := cast.ToStringE(authMethod["type"])
-		if err != nil {
-			return fmt.Errorf("error finding auth method type: %s", err.Error())
+
+		if authMethod.Type == "" {
+			return fmt.Errorf("can't find type for auth method")
 		}
 
-		path := authMethodType
-		if pathOverwrite, ok := authMethod["path"]; ok {
-			path, err = cast.ToStringE(pathOverwrite)
-			if err != nil {
-				return fmt.Errorf("error converting path for auth method: %s", err.Error())
-			}
-			path = strings.Trim(path, "/")
+		path := authMethod.Type
+
+		if authMethod.Path != "" {
+			path = strings.Trim(authMethod.Path, "/")
 		}
 
-		description := fmt.Sprintf("%s backend", authMethodType)
-		if descriptionOverwrite, ok := authMethod["description"]; ok {
-			description, err = cast.ToStringE(descriptionOverwrite)
-			if err != nil {
-				return fmt.Errorf("error converting description for auth method: %s", err.Error())
-			}
+		description := fmt.Sprintf("%s backend", authMethod.Type)
+		if authMethod.Description != "" {
+			description = authMethod.Description
 		}
 
 		// Check and skip existing auth mounts
 		exists := false
 		if authMount, ok := existingAuths[path+"/"]; ok {
-			if authMount.Type == authMethodType {
-				logrus.Debugf("%s auth backend is already mounted in vault", authMethodType)
+			if authMount.Type == authMethod.Type {
+				logrus.Debugf("%s auth backend is already mounted in vault", authMethod.Type)
 				exists = true
 			}
 		}
 
 		if !exists {
-			logrus.Debugf("enabling %s auth backend in vault...", authMethodType)
+			logrus.Debugf("enabling %s auth backend in vault...", authMethod.Type)
 
 			// https://www.vaultproject.io/api/system/auth.html
 			options := api.EnableAuthOptions{
-				Type:        authMethodType,
+				Type:        authMethod.Type,
 				Description: description,
 			}
 
 			err := v.cl.Sys().EnableAuthWithOptions(path, &options)
 
 			if err != nil {
-				return fmt.Errorf("error enabling %s auth method for vault: %s", authMethodType, err.Error())
+				return fmt.Errorf("error enabling %s auth method for vault: %s", authMethod.Type, err.Error())
 			}
 		}
 
-		switch authMethodType {
+		switch authMethod.Type {
 		case "kubernetes":
-			config, err := getOrDefaultStringMap(authMethod, "config")
-			if err != nil {
-				return fmt.Errorf("error finding config block for kubernetes: %s", err.Error())
+			config := authMethod.Config
+			if config != nil {
+				return fmt.Errorf("error finding config block for %s", authMethod.Type)
 			}
 			// If kubernetes_host is defined we are probably out of cluster, so don't read the default config
 			if _, ok := config["kubernetes_host"]; !ok {
@@ -513,39 +533,31 @@ func (v *vault) configureAuthMethods(config *viper.Viper) error {
 				}
 				config = defaultConfig
 			}
-			err = v.configureGenericAuthConfig(authMethodType, path, config)
+			err = v.configureGenericAuthConfig(authMethod.Type, path, config)
 			if err != nil {
-				return fmt.Errorf("error configuring kubernetes auth for vault: %s", err.Error())
+				return fmt.Errorf("error configuring %s auth for vault: %s", authMethod.Type, err.Error())
 			}
-			roles, err := cast.ToSliceE(authMethod["roles"])
+			err = v.configureGenericAuthRoles(authMethod.Type, path, "role", authMethod.Roles)
 			if err != nil {
-				return fmt.Errorf("error finding roles block for kubernetes: %s", err.Error())
-			}
-			err = v.configureGenericAuthRoles(authMethodType, path, "role", roles)
-			if err != nil {
-				return fmt.Errorf("error configuring kubernetes auth roles for vault: %s", err.Error())
+				return fmt.Errorf("error configuring %s auth roles for vault: %s", authMethod.Type, err.Error())
 			}
 		case "github":
-			config, err := cast.ToStringMapE(authMethod["config"])
-			if err != nil {
-				return fmt.Errorf("error finding config block for github: %s", err.Error())
+			config := authMethod.Config
+			if config != nil {
+				return fmt.Errorf("error finding config block for %s", authMethod.Type)
 			}
-			err = v.configureGenericAuthConfig(authMethodType, path, config)
+			err = v.configureGenericAuthConfig(authMethod.Type, path, config)
 			if err != nil {
-				return fmt.Errorf("error configuring github auth for vault: %s", err.Error())
+				return fmt.Errorf("error configuring %s auth for vault: %s", authMethod.Type, err.Error())
 			}
-			mappings, err := cast.ToStringMapE(authMethod["map"])
-			if err != nil {
-				return fmt.Errorf("error finding map block for github: %s", err.Error())
-			}
-			err = v.configureGithubMappings(path, mappings)
+			err = v.configureGithubMappings(path, authMethod.VaultGithubAuthMethod.Mappings)
 			if err != nil {
 				return fmt.Errorf("error configuring github mappings for vault: %s", err.Error())
 			}
 		case "aws":
-			config, err := cast.ToStringMapE(authMethod["config"])
-			if err != nil {
-				return fmt.Errorf("error finding config block for aws: %s", err.Error())
+			config := authMethod.Config
+			if config != nil {
+				return fmt.Errorf("error finding config block for %s", authMethod.Type)
 			}
 			err = v.configureAwsConfig(path, config)
 			if err != nil {
@@ -561,101 +573,77 @@ func (v *vault) configureAuthMethods(config *viper.Viper) error {
 					return fmt.Errorf("error configuring aws auth cross account roles for vault: %s", err.Error())
 				}
 			}
-			roles, err := cast.ToSliceE(authMethod["roles"])
+			err = v.configureGenericAuthRoles(authMethod.Type, path, "role", authMethod.Roles)
 			if err != nil {
-				return fmt.Errorf("error finding roles block for aws: %s", err.Error())
-			}
-			err = v.configureGenericAuthRoles(authMethodType, path, "role", roles)
-			if err != nil {
-				return fmt.Errorf("error configuring aws auth roles for vault: %s", err.Error())
+				return fmt.Errorf("error configuring %s auth roles for vault: %s", authMethod.Type, err.Error())
 			}
 		case "gcp":
-			config, err := cast.ToStringMapE(authMethod["config"])
-			if err != nil {
-				return fmt.Errorf("error finding config block for gcp: %s", err.Error())
+			config := authMethod.Config
+			if config != nil {
+				return fmt.Errorf("error finding config block for %s", authMethod.Type)
 			}
-			err = v.configureGenericAuthConfig(authMethodType, path, config)
+			err = v.configureGenericAuthConfig(authMethod.Type, path, config)
 			if err != nil {
-				return fmt.Errorf("error configuring gcp auth for vault: %s", err.Error())
+				return fmt.Errorf("error configuring %s auth for vault: %s", authMethod.Type, err.Error())
 			}
-			roles, err := cast.ToSliceE(authMethod["roles"])
+			err = v.configureGenericAuthRoles(authMethod.Type, path, "role", authMethod.Roles)
 			if err != nil {
-				return fmt.Errorf("error finding roles block for gcp: %s", err.Error())
-			}
-			err = v.configureGenericAuthRoles(authMethodType, path, "role", roles)
-			if err != nil {
-				return fmt.Errorf("error configuring gcp auth roles for vault: %s", err.Error())
+				return fmt.Errorf("error configuring %s auth roles for vault: %s", authMethod.Type, err.Error())
 			}
 		case "approle":
-			roles, err := cast.ToSliceE(authMethod["roles"])
+			err = v.configureGenericAuthRoles(authMethod.Type, path, "role", authMethod.Roles)
 			if err != nil {
-				return fmt.Errorf("error finding role block for approle: %s", err.Error())
-			}
-			err = v.configureGenericAuthRoles(authMethodType, path, "role", roles)
-			if err != nil {
-				return fmt.Errorf("error configuring approle auth for vault: %s", err.Error())
+				return fmt.Errorf("error configuring %s auth roles for vault: %s", authMethod.Type, err.Error())
 			}
 		case "jwt", "oidc":
-			config, err := cast.ToStringMapE(authMethod["config"])
-			if err != nil {
-				return fmt.Errorf("error finding config block for %s: %s", authMethodType, err.Error())
+			config := authMethod.Config
+			if config != nil {
+				return fmt.Errorf("error finding config block for %s", authMethod.Type)
 			}
-			err = v.configureGenericAuthConfig(authMethodType, path, config)
+			err = v.configureGenericAuthConfig(authMethod.Type, path, config)
 			if err != nil {
-				return fmt.Errorf("error configuring %s auth on path %s for vault: %s", authMethodType, path, err.Error())
+				return fmt.Errorf("error configuring %s auth for vault: %s", authMethod.Type, err.Error())
 			}
-			roles, err := cast.ToSliceE(authMethod["roles"])
+			err = v.configureJwtRoles(path, authMethod.Roles)
 			if err != nil {
-				return fmt.Errorf("error finding roles block for %s: %s", authMethodType, err.Error())
-			}
-			err = v.configureJwtRoles(path, roles)
-			if err != nil {
-				return fmt.Errorf("error configuring %s roles on path %s for vault: %s", authMethodType, path, err.Error())
+				return fmt.Errorf("error configuring %s roles on path %s for vault: %s", authMethod.Type, path, err.Error())
 			}
 		case "token":
-			roles, err := cast.ToSliceE(authMethod["roles"])
+			err = v.configureGenericAuthRoles(authMethod.Type, "token", "role", authMethod.Roles)
 			if err != nil {
-				return fmt.Errorf("error finding roles block for token: %s", err.Error())
-			}
-			err = v.configureGenericAuthRoles(authMethodType, "token", "roles", roles)
-			if err != nil {
-				return fmt.Errorf("error configuring token roles for vault: %s", err.Error())
+				return fmt.Errorf("error configuring %s auth roles for vault: %s", authMethod.Type, err.Error())
 			}
 		case "cert":
-			config, err := cast.ToStringMapE(authMethod["config"])
-			if err != nil {
-				return fmt.Errorf("error finding config block for cert: %s", err.Error())
+			config := authMethod.Config
+			if config != nil {
+				return fmt.Errorf("error finding config block for %s", authMethod.Type)
 			}
-			err = v.configureGenericAuthConfig(authMethodType, path, config)
+			err = v.configureGenericAuthConfig(authMethod.Type, path, config)
 			if err != nil {
-				return fmt.Errorf("error configuring cert auth for vault: %s", err.Error())
+				return fmt.Errorf("error configuring %s auth for vault: %s", authMethod.Type, err.Error())
 			}
-			roles, err := cast.ToSliceE(authMethod["roles"])
+			err = v.configureGenericAuthRoles(authMethod.Type, path, "certs", authMethod.Roles)
 			if err != nil {
-				return fmt.Errorf("error finding roles block for certs: %s", err.Error())
-			}
-			err = v.configureGenericAuthRoles(authMethodType, path, "certs", roles)
-			if err != nil {
-				return fmt.Errorf("error configuring certs auth roles for vault: %s", err.Error())
+				return fmt.Errorf("error configuring %s auth roles for vault: %s", authMethod.Type, err.Error())
 			}
 		case "ldap", "okta":
-			config, err := cast.ToStringMapE(authMethod["config"])
-			if err != nil {
-				return fmt.Errorf("error finding config block for %s: %s", authMethodType, err.Error())
+			config := authMethod.Config
+			if config != nil {
+				return fmt.Errorf("error finding config block for %s", authMethod.Type)
 			}
-			err = v.configureGenericAuthConfig(authMethodType, path, config)
+			err = v.configureGenericAuthConfig(authMethod.Type, path, config)
 			if err != nil {
-				return fmt.Errorf("error configuring %s auth on path %s for vault: %s", authMethodType, path, err.Error())
+				return fmt.Errorf("error configuring %s auth for vault: %s", authMethod.Type, err.Error())
 			}
 			for _, usersOrGroupsKey := range []string{"groups", "users"} {
 				if userOrGroupRaw, ok := authMethod[usersOrGroupsKey]; ok {
 					userOrGroup, err := cast.ToStringMapE(userOrGroupRaw)
 					if err != nil {
-						return fmt.Errorf("error finding %s block for %s: %s", usersOrGroupsKey, authMethodType, err.Error())
+						return fmt.Errorf("error finding %s block for %s: %s", usersOrGroupsKey, authMethod.Type, err.Error())
 					}
-					err = v.configureGenericUserAndGroupMappings(authMethodType, path, usersOrGroupsKey, userOrGroup)
+					err = v.configureGenericUserAndGroupMappings(authMethod.Type, path, usersOrGroupsKey, userOrGroup)
 					if err != nil {
-						return fmt.Errorf("error configuring %s %s for vault: %s", authMethodType, usersOrGroupsKey, err.Error())
+						return fmt.Errorf("error configuring %s %s for vault: %s", authMethod.Type, usersOrGroupsKey, err.Error())
 					}
 				}
 			}
@@ -690,12 +678,8 @@ func (v *vault) configurePolicies(config *viper.Viper) error {
 	return nil
 }
 
-func (v *vault) configureGithubMappings(path string, mappings map[string]interface{}) error {
+func (v *vault) configureGithubMappings(path string, mappings map[string]map[string]string) error {
 	for mappingType, mapping := range mappings {
-		mapping, err := cast.ToStringMapStringE(mapping)
-		if err != nil {
-			return fmt.Errorf("error converting mapping for github: %s", err.Error())
-		}
 		for userOrTeam, policy := range mapping {
 			_, err := v.cl.Logical().Write(fmt.Sprintf("auth/%s/map/%s/%s", path, mappingType, userOrTeam), map[string]interface{}{"value": policy})
 			if err != nil {
@@ -723,14 +707,9 @@ func (v *vault) configureAwsConfig(path string, config map[string]interface{}) e
 // https://www.vaultproject.io/api/auth/aws/index.html
 // https://www.vaultproject.io/api/auth/approle/index.html
 // https://www.vaultproject.io/api/auth/token/index.html
-func (v *vault) configureGenericAuthRoles(method, path, roleSubPath string, roles []interface{}) error {
-	for _, roleInterface := range roles {
-		role, err := cast.ToStringMapE(roleInterface)
-		if err != nil {
-			return fmt.Errorf("error converting roles for %s: %s", method, err.Error())
-		}
-
-		_, err = v.cl.Logical().Write(fmt.Sprintf("auth/%s/%s/%s", path, roleSubPath, role["name"]), role)
+func (v *vault) configureGenericAuthRoles(method, path, roleSubPath string, roles []map[string]interface{}) error {
+	for _, role := range roles {
+		_, err := v.cl.Logical().Write(fmt.Sprintf("auth/%s/%s/%s", path, roleSubPath, role["name"]), role)
 		if err != nil {
 			return fmt.Errorf("error putting %s %s role into vault: %s", role["name"], method, err.Error())
 		}
@@ -772,12 +751,9 @@ func (v *vault) configureGenericAuthConfig(method, path string, config map[strin
 }
 
 // TODO try to generalize this with configureGenericAuthRoles() fix the type flaw
-func (v *vault) configureJwtRoles(path string, roles []interface{}) error {
-	for _, roleInterface := range roles {
-		role, err := cast.ToStringMapE(roleInterface)
-		if err != nil {
-			return fmt.Errorf("error converting roles for jwt: %s", err.Error())
-		}
+func (v *vault) configureJwtRoles(path string, roles []map[string]interface{}) error {
+	for _, role := range roles {
+		// TODO not sure if this is needed any more after the new type based parsing
 		// role can have have a bound_claims or claim_mappings child dict. But it will cause:
 		// `json: unsupported type: map[interface {}]interface {}`
 		// So check and replace by `map[string]interface{}` before using it.
@@ -788,7 +764,7 @@ func (v *vault) configureJwtRoles(path string, roles []interface{}) error {
 			role["claim_mappings"] = cast.ToStringMap(val)
 		}
 
-		_, err = v.cl.Logical().Write(fmt.Sprintf("auth/%s/role/%s", path, role["name"]), role)
+		_, err := v.cl.Logical().Write(fmt.Sprintf("auth/%s/role/%s", path, role["name"]), role)
 
 		if err != nil {
 			return fmt.Errorf("error putting %s jwt role into vault: %s", role["name"], err.Error())
@@ -1013,11 +989,11 @@ func (v *vault) configureSecretEngines(config *viper.Viper) error {
 
 				// Control if the configs should be updated or just Created once and skipped later on
 				// This is a workaround to secrets backend like GCP that will destroy and recreate secrets at every iteration
-				create_only := cast.ToBool(subConfigData["create_only"])
+				createOnly := cast.ToBool(subConfigData["create_only"])
 				// Delete the create_only key from the map, so we don't push it to vault
 				delete(subConfigData, "create_only")
 
-				if create_only && mountExists {
+				if createOnly && mountExists {
 					sec, err := v.cl.Logical().Read(configPath)
 					if err != nil {
 						return fmt.Errorf("error reading configPath %s: %s", configPath, err.Error())
