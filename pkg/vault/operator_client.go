@@ -349,8 +349,8 @@ func (v *vault) StepDownActive(address string) error {
 }
 
 type VaultPolicy struct {
-	Name   string
-	Policy string
+	Name  string
+	Rules string
 }
 
 type VaultAuthMethod struct {
@@ -360,11 +360,22 @@ type VaultAuthMethod struct {
 	Config      map[string]interface{}
 	Roles       []map[string]interface{}
 
-	VaultGithubAuthMethod `mapstructure:",squash"`
+	VaultAWSAuthMethod              `mapstructure:",squash"`
+	VaultGithubAuthMethod           `mapstructure:",squash"`
+	VaultAuthMethodUserGroupMapping `mapstructure:",squash"`
 }
 
 type VaultGithubAuthMethod struct {
 	Mappings map[string]map[string]string `mapstructure:"map"`
+}
+
+type VaultAWSAuthMethod struct {
+	STSRoles []map[string]interface{} `mapstructure:"sts_roles"`
+}
+
+type VaultAuthMethodUserGroupMapping struct {
+	Users  map[string]map[string]interface{} `mapstructure:"users"`
+	Groups map[string]map[string]interface{} `mapstructure:"groups"`
 }
 
 type VaultExternalConfig struct {
@@ -518,7 +529,7 @@ func (v *vault) configureAuthMethods(authMethods []VaultAuthMethod) error {
 		switch authMethod.Type {
 		case "kubernetes":
 			config := authMethod.Config
-			if config != nil {
+			if config == nil {
 				return fmt.Errorf("error finding config block for %s", authMethod.Type)
 			}
 			// If kubernetes_host is defined we are probably out of cluster, so don't read the default config
@@ -543,7 +554,7 @@ func (v *vault) configureAuthMethods(authMethods []VaultAuthMethod) error {
 			}
 		case "github":
 			config := authMethod.Config
-			if config != nil {
+			if config == nil {
 				return fmt.Errorf("error finding config block for %s", authMethod.Type)
 			}
 			err = v.configureGenericAuthConfig(authMethod.Type, path, config)
@@ -556,21 +567,17 @@ func (v *vault) configureAuthMethods(authMethods []VaultAuthMethod) error {
 			}
 		case "aws":
 			config := authMethod.Config
-			if config != nil {
+			if config == nil {
 				return fmt.Errorf("error finding config block for %s", authMethod.Type)
 			}
 			err = v.configureAwsConfig(path, config)
 			if err != nil {
 				return fmt.Errorf("error configuring aws auth for vault: %s", err.Error())
 			}
-			if crossaccountroleRaw, ok := authMethod["crossaccountrole"]; ok {
-				crossaccountrole, err := cast.ToSliceE(crossaccountroleRaw)
+			if authMethod.VaultAWSAuthMethod.STSRoles != nil {
+				err = v.configureAWSCrossAccountRoles(path, authMethod.VaultAWSAuthMethod.STSRoles)
 				if err != nil {
-					return fmt.Errorf("error finding crossaccountrole block for aws: %s", err.Error())
-				}
-				err = v.configureAWSCrossAccountRoles(path, crossaccountrole)
-				if err != nil {
-					return fmt.Errorf("error configuring aws auth cross account roles for vault: %s", err.Error())
+					return fmt.Errorf("error configuring aws auth cross account (sts) roles for vault: %s", err.Error())
 				}
 			}
 			err = v.configureGenericAuthRoles(authMethod.Type, path, "role", authMethod.Roles)
@@ -579,7 +586,7 @@ func (v *vault) configureAuthMethods(authMethods []VaultAuthMethod) error {
 			}
 		case "gcp":
 			config := authMethod.Config
-			if config != nil {
+			if config == nil {
 				return fmt.Errorf("error finding config block for %s", authMethod.Type)
 			}
 			err = v.configureGenericAuthConfig(authMethod.Type, path, config)
@@ -597,7 +604,7 @@ func (v *vault) configureAuthMethods(authMethods []VaultAuthMethod) error {
 			}
 		case "jwt", "oidc":
 			config := authMethod.Config
-			if config != nil {
+			if config == nil {
 				return fmt.Errorf("error finding config block for %s", authMethod.Type)
 			}
 			err = v.configureGenericAuthConfig(authMethod.Type, path, config)
@@ -609,13 +616,13 @@ func (v *vault) configureAuthMethods(authMethods []VaultAuthMethod) error {
 				return fmt.Errorf("error configuring %s roles on path %s for vault: %s", authMethod.Type, path, err.Error())
 			}
 		case "token":
-			err = v.configureGenericAuthRoles(authMethod.Type, "token", "role", authMethod.Roles)
+			err = v.configureGenericAuthRoles(authMethod.Type, "token", "roles", authMethod.Roles)
 			if err != nil {
 				return fmt.Errorf("error configuring %s auth roles for vault: %s", authMethod.Type, err.Error())
 			}
 		case "cert":
 			config := authMethod.Config
-			if config != nil {
+			if config == nil {
 				return fmt.Errorf("error finding config block for %s", authMethod.Type)
 			}
 			err = v.configureGenericAuthConfig(authMethod.Type, path, config)
@@ -628,23 +635,23 @@ func (v *vault) configureAuthMethods(authMethods []VaultAuthMethod) error {
 			}
 		case "ldap", "okta":
 			config := authMethod.Config
-			if config != nil {
+			if config == nil {
 				return fmt.Errorf("error finding config block for %s", authMethod.Type)
 			}
 			err = v.configureGenericAuthConfig(authMethod.Type, path, config)
 			if err != nil {
 				return fmt.Errorf("error configuring %s auth for vault: %s", authMethod.Type, err.Error())
 			}
-			for _, usersOrGroupsKey := range []string{"groups", "users"} {
-				if userOrGroupRaw, ok := authMethod[usersOrGroupsKey]; ok {
-					userOrGroup, err := cast.ToStringMapE(userOrGroupRaw)
-					if err != nil {
-						return fmt.Errorf("error finding %s block for %s: %s", usersOrGroupsKey, authMethod.Type, err.Error())
-					}
-					err = v.configureGenericUserAndGroupMappings(authMethod.Type, path, usersOrGroupsKey, userOrGroup)
-					if err != nil {
-						return fmt.Errorf("error configuring %s %s for vault: %s", authMethod.Type, usersOrGroupsKey, err.Error())
-					}
+			if users := authMethod.VaultAuthMethodUserGroupMapping.Users; users != nil {
+				err = v.configureGenericUserAndGroupMappings(authMethod.Type, path, "users", users)
+				if err != nil {
+					return fmt.Errorf("error configuring %s users for vault: %s", authMethod.Type, err.Error())
+				}
+			}
+			if groups := authMethod.VaultAuthMethodUserGroupMapping.Groups; groups != nil {
+				err = v.configureGenericUserAndGroupMappings(authMethod.Type, path, "groups", groups)
+				if err != nil {
+					return fmt.Errorf("error configuring %s groups for vault: %s", authMethod.Type, err.Error())
 				}
 			}
 		}
@@ -717,16 +724,14 @@ func (v *vault) configureGenericAuthRoles(method, path, roleSubPath string, role
 	return nil
 }
 
-func (v *vault) configureAWSCrossAccountRoles(path string, crossAccountRoles []interface{}) error {
-	for _, roleInterface := range crossAccountRoles {
-		crossAccountRole, err := cast.ToStringMapE(roleInterface)
-		if err != nil {
-			return fmt.Errorf("error converting cross account aws roles for aws: %s", err.Error())
-		}
+func (v *vault) configureAWSCrossAccountRoles(path string, crossAccountRoles []map[string]interface{}) error {
+	for _, crossAccountRole := range crossAccountRoles {
 
-		stsAccount := fmt.Sprint(crossAccountRole["sts_account"])
+		stsAccount := fmt.Sprint(crossAccountRole["account_id"])
 
-		_, err = v.cl.Logical().Write(fmt.Sprintf("auth/%s/config/sts/%s", path, stsAccount), crossAccountRole)
+		fmt.Printf("%+v\n", crossAccountRole)
+
+		_, err := v.cl.Logical().Write(fmt.Sprintf("auth/%s/config/sts/%s", path, stsAccount), crossAccountRole)
 		if err != nil {
 			return fmt.Errorf("error putting %s cross account aws role into vault: %s", stsAccount, err.Error())
 		}
@@ -773,13 +778,9 @@ func (v *vault) configureJwtRoles(path string, roles []map[string]interface{}) e
 	return nil
 }
 
-func (v *vault) configureGenericUserAndGroupMappings(method, path string, mappingType string, mappings map[string]interface{}) error {
-	for userOrGroup, policy := range mappings {
-		mapping, err := cast.ToStringMapE(policy)
-		if err != nil {
-			return fmt.Errorf("error converting mapping for %s: %s", method, err.Error())
-		}
-		_, err = v.cl.Logical().Write(fmt.Sprintf("auth/%s/%s/%s", path, mappingType, userOrGroup), mapping)
+func (v *vault) configureGenericUserAndGroupMappings(method, path string, mappingType string, mappings map[string]map[string]interface{}) error {
+	for userOrGroup, mapping := range mappings {
+		_, err := v.cl.Logical().Write(fmt.Sprintf("auth/%s/%s/%s", path, mappingType, userOrGroup), mapping)
 		if err != nil {
 			return fmt.Errorf("error putting %s %s mapping into vault: %s", method, mappingType, err.Error())
 		}
