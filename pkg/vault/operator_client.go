@@ -374,8 +374,8 @@ type VaultAWSAuthMethod struct {
 }
 
 type VaultAuthMethodUserGroupMapping struct {
-	Users  map[string]map[string]interface{} `mapstructure:"users"`
-	Groups map[string]map[string]interface{} `mapstructure:"groups"`
+	Users  map[string]map[string]interface{}
+	Groups map[string]map[string]interface{}
 }
 
 type VaultExternalConfig struct {
@@ -410,7 +410,7 @@ func (v *vault) Configure(config *viper.Viper) error {
 		return fmt.Errorf("error configuring auth methods for vault: %s", err.Error())
 	}
 
-	err = v.configurePolicies(config)
+	err = v.configurePolicies(externalConfig.Policies)
 	if err != nil {
 		return fmt.Errorf("error configuring policies for vault: %s", err.Error())
 	}
@@ -660,25 +660,16 @@ func (v *vault) configureAuthMethods(authMethods []VaultAuthMethod) error {
 	return nil
 }
 
-func (v *vault) configurePolicies(config *viper.Viper) error {
-	policies := []map[string]string{}
-
-	err := config.UnmarshalKey("policies", &policies)
-	if err != nil {
-		return fmt.Errorf("error unmarshalling vault policy config: %s", err.Error())
-	}
-
+func (v *vault) configurePolicies(policies []VaultPolicy) error {
 	for _, policy := range policies {
-
-		policyName := policy["name"]
-		policyRules, err := hclPrinter.Format([]byte(policy["rules"]))
+		policyRules, err := hclPrinter.Format([]byte(policy.Rules))
 		if err != nil {
-			return fmt.Errorf("error formatting %s policy rules: %s", policyName, err.Error())
+			return fmt.Errorf("error formatting %s policy rules: %s", policy.Name, err.Error())
 		}
 
-		err = v.cl.Sys().PutPolicy(policyName, string(policyRules))
+		err = v.cl.Sys().PutPolicy(policy.Name, string(policyRules))
 		if err != nil {
-			return fmt.Errorf("error putting %s policy into vault: %s", policyName, err.Error())
+			return fmt.Errorf("error putting %s policy into vault: %s", policy.Name, err.Error())
 		}
 	}
 
@@ -694,16 +685,17 @@ func (v *vault) configureGithubMappings(path string, mappings map[string]map[str
 			}
 		}
 	}
+
 	return nil
 }
 
 func (v *vault) configureAwsConfig(path string, config map[string]interface{}) error {
 	// https://www.vaultproject.io/api/auth/aws/index.html
 	_, err := v.cl.Logical().Write(fmt.Sprintf("auth/%s/config/client", path), config)
-
 	if err != nil {
 		return fmt.Errorf("error putting aws config into vault: %s", err.Error())
 	}
+
 	return nil
 }
 
