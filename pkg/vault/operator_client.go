@@ -378,9 +378,31 @@ type VaultAuthMethodUserGroupMapping struct {
 	Groups map[string]map[string]interface{}
 }
 
+type VaultSecretEngine struct {
+	Type          string
+	Path          string
+	Description   string
+	PluginName    string `mapstructure:"plugin_name"`
+	Local         bool
+	SealWrap      bool `mapstructure:"seal_wrap"`
+	Config        api.MountConfigInput
+	Options       map[string]string
+	Configuration map[string][]map[string]interface{}
+}
+
+type VaultPlugin struct {
+	Name    string `mapstructure:"plugin_name"`
+	Type    string
+	Command string
+	Args    []string
+	SHA256  string
+}
+
 type VaultExternalConfig struct {
-	Policies []VaultPolicy
-	Auth     []VaultAuthMethod
+	Policies      []VaultPolicy       `mapstructure:"policies"`
+	AuthMethods   []VaultAuthMethod   `mapstructure:"auth"`
+	SecretEngines []VaultSecretEngine `mapstructure:"secrets"`
+	Plugins       []VaultPlugin       `mapstructure:"plugins"`
 }
 
 func (v *vault) Configure(config *viper.Viper) error {
@@ -405,7 +427,7 @@ func (v *vault) Configure(config *viper.Viper) error {
 		return fmt.Errorf("error unmarshalling external config for vault: %s", err.Error())
 	}
 
-	err = v.configureAuthMethods(externalConfig.Auth)
+	err = v.configureAuthMethods(externalConfig.AuthMethods)
 	if err != nil {
 		return fmt.Errorf("error configuring auth methods for vault: %s", err.Error())
 	}
@@ -415,12 +437,12 @@ func (v *vault) Configure(config *viper.Viper) error {
 		return fmt.Errorf("error configuring policies for vault: %s", err.Error())
 	}
 
-	err = v.configurePlugins(config)
+	err = v.configurePlugins(externalConfig.Plugins)
 	if err != nil {
 		return fmt.Errorf("error configuring plugins for vault: %s", err.Error())
 	}
 
-	err = v.configureSecretEngines(config)
+	err = v.configureSecretEngines(externalConfig.SecretEngines)
 	if err != nil {
 		return fmt.Errorf("error configuring secret engines for vault: %s", err.Error())
 	}
@@ -780,13 +802,7 @@ func (v *vault) configureGenericUserAndGroupMappings(method, path string, mappin
 	return nil
 }
 
-func (v *vault) configurePlugins(config *viper.Viper) error {
-	plugins := []map[string]interface{}{}
-	err := config.UnmarshalKey("plugins", &plugins)
-	if err != nil {
-		return fmt.Errorf("error unmarshalling vault plugins config: %s", err.Error())
-	}
-
+func (v *vault) configurePlugins(plugins []VaultPlugin) error {
 	listPlugins, err := v.cl.Sys().ListPlugins(&api.ListPluginsInput{})
 	if err != nil {
 		return fmt.Errorf("failed to retrieve list of plugins: %s", err.Error())
@@ -795,33 +811,18 @@ func (v *vault) configurePlugins(config *viper.Viper) error {
 	logrus.Debugf("already registered plugins: %#v", listPlugins.Names)
 
 	for _, plugin := range plugins {
-		command, err := getOrError(plugin, "command")
-		if err != nil {
-			return fmt.Errorf("error getting command for plugin: %s", err.Error())
-		}
-		pluginName, err := getOrError(plugin, "plugin_name")
-		if err != nil {
-			return fmt.Errorf("error getting plugin_name for plugin: %s", err.Error())
-		}
-		sha256, err := getOrError(plugin, "sha256")
-		if err != nil {
-			return fmt.Errorf("error getting sha256 for plugin: %s", err.Error())
-		}
-		typeRaw, err := getOrError(plugin, "type")
-		if err != nil {
-			return fmt.Errorf("error getting type for plugin: %s", err.Error())
-		}
-		pluginType, err := consts.ParsePluginType(typeRaw)
+		pluginType, err := consts.ParsePluginType(plugin.Type)
 		if err != nil {
 			return fmt.Errorf("error parsing type for plugin: %s", err.Error())
 		}
 
 		input := api.RegisterPluginInput{
-			Name:    pluginName,
-			Command: command,
-			SHA256:  sha256,
+			Name:    plugin.Name,
+			Command: plugin.Command,
+			SHA256:  plugin.SHA256,
 			Type:    pluginType,
 		}
+
 		logrus.Infof("registering plugin with input: %#v", input)
 
 		err = v.cl.Sys().RegisterPlugin(&input)
@@ -844,26 +845,16 @@ func (v *vault) mountExists(path string) (bool, error) {
 	return mounts[path+"/"] != nil, nil
 }
 
-func (v *vault) configureSecretEngines(config *viper.Viper) error {
-	secretsEngines := []map[string]interface{}{}
-	err := config.UnmarshalKey("secrets", &secretsEngines)
-	if err != nil {
-		return fmt.Errorf("error unmarshalling vault secrets config: %s", err.Error())
-	}
-
+func (v *vault) configureSecretEngines(secretsEngines []VaultSecretEngine) error {
 	for _, secretEngine := range secretsEngines {
-		secretEngineType, err := cast.ToStringE(secretEngine["type"])
-		if err != nil {
-			return fmt.Errorf("error finding type for secret engine: %s", err.Error())
+		if secretEngine.Type == "" {
+			return fmt.Errorf("can't find type for secret engine")
 		}
 
-		path := secretEngineType
-		if pathOverwrite, ok := secretEngine["path"]; ok {
-			path, err = cast.ToStringE(pathOverwrite)
-			if err != nil {
-				return fmt.Errorf("error converting path for secret engine: %s", err.Error())
-			}
-			path = strings.Trim(path, "/")
+		path := secretEngine.Type
+
+		if secretEngine.Path != "" {
+			path = strings.Trim(secretEngine.Path, "/")
 		}
 
 		mountExists, err := v.mountExists(path)
@@ -872,34 +863,15 @@ func (v *vault) configureSecretEngines(config *viper.Viper) error {
 		}
 
 		if !mountExists {
-			description, err := getOrDefaultString(secretEngine, "description")
-			if err != nil {
-				return fmt.Errorf("error getting description for secret engine: %s", err.Error())
-			}
-			pluginName, err := getOrDefaultString(secretEngine, "plugin_name")
-			if err != nil {
-				return fmt.Errorf("error getting plugin_name for secret engine: %s", err.Error())
-			}
-			local, err := getOrDefaultBool(secretEngine, "local")
-			if err != nil {
-				return fmt.Errorf("error getting local for secret engine: %s", err.Error())
-			}
-			sealWrap, err := getOrDefaultBool(secretEngine, "seal_wrap")
-			if err != nil {
-				return fmt.Errorf("error getting seal_wrap for secret engine: %s", err.Error())
-			}
-			config, err := getMountConfigInput(secretEngine)
-			if err != nil {
-				return err
-			}
+			config := getMountConfigInput(secretEngine)
 			input := api.MountInput{
-				Type:        secretEngineType,
-				Description: description,
-				PluginName:  pluginName,
+				Type:        secretEngine.Type,
+				Description: secretEngine.Description,
+				PluginName:  secretEngine.PluginName,
 				Config:      config,
-				Options:     config.Options, // options needs to be sent here first time
-				Local:       local,
-				SealWrap:    sealWrap,
+				Options:     secretEngine.Config.Options, // options needs to be sent here first time
+				Local:       secretEngine.Local,
+				SealWrap:    secretEngine.SealWrap,
 			}
 			logrus.Infof("mounting secret engine with input: %#v", input)
 			err = v.cl.Sys().Mount(path, &input)
@@ -907,14 +879,11 @@ func (v *vault) configureSecretEngines(config *viper.Viper) error {
 				return fmt.Errorf("error mounting %s into vault: %s", path, err.Error())
 			}
 
-			logrus.Infoln("mounted", secretEngineType, "to", path)
+			logrus.Infoln("mounted", secretEngine.Type, "to", path)
 
 		} else {
 			logrus.Infof("tuning already existing mount: %s/", path)
-			config, err := getMountConfigInput(secretEngine)
-			if err != nil {
-				return err
-			}
+			config := getMountConfigInput(secretEngine)
 			err = v.cl.Sys().TuneMount(path, config)
 			if err != nil {
 				return fmt.Errorf("error tuning %s in vault: %s", path, err.Error())
@@ -922,16 +891,7 @@ func (v *vault) configureSecretEngines(config *viper.Viper) error {
 		}
 
 		// Configuration of the Secret Engine in a very generic manner, YAML config file should have the proper format
-		configuration, err := getOrDefaultStringMap(secretEngine, "configuration")
-		if err != nil {
-			return fmt.Errorf("error getting configuration for secret engine: %s", err.Error())
-		}
-
-		for configOption, configData := range configuration {
-			configData, err := cast.ToSliceE(configData)
-			if err != nil {
-				return fmt.Errorf("error converting config data for secret engine: %s", err.Error())
-			}
+		for configOption, configData := range secretEngine.Configuration {
 			for _, subConfigData := range configData {
 				subConfigData, err := cast.ToStringMapE(subConfigData)
 				if err != nil {
@@ -939,7 +899,7 @@ func (v *vault) configureSecretEngines(config *viper.Viper) error {
 				}
 
 				name, ok := subConfigData["name"]
-				if !ok && !isConfigNoNeedName(secretEngineType, configOption) {
+				if !ok && !isConfigNoNeedName(secretEngine.Type, configOption) {
 					return fmt.Errorf("error finding sub config data name for secret engine: %s/%s", path, configOption)
 				}
 
@@ -967,11 +927,11 @@ func (v *vault) configureSecretEngines(config *viper.Viper) error {
 				// - AWS
 				// - Database
 				if rotate && mountExists &&
-					((secretEngineType == "database" && configOption == "config") ||
-						(secretEngineType == "aws" && configOption == "config/root")) {
+					((secretEngine.Type == "database" && configOption == "config") ||
+						(secretEngine.Type == "aws" && configOption == "config/root")) {
 
 					// TODO we need to find out if it was rotated or not
-					err = v.rotateSecretEngineCredentials(secretEngineType, path, name.(string), configPath)
+					err = v.rotateSecretEngineCredentials(secretEngine.Type, path, name.(string), configPath)
 					if err != nil {
 						return fmt.Errorf("error rotating credentials for '%s' config in vault: %s", configPath, err.Error())
 					}
@@ -1008,7 +968,7 @@ func (v *vault) configureSecretEngines(config *viper.Viper) error {
 				}
 
 				if rotate {
-					err = v.rotateSecretEngineCredentials(secretEngineType, path, name.(string), configPath)
+					err = v.rotateSecretEngineCredentials(secretEngine.Type, path, name.(string), configPath)
 					if err != nil {
 						return fmt.Errorf("error rotating credentials for '%s' config in vault: %s", configPath, err.Error())
 					}
@@ -1352,37 +1312,17 @@ func getOrDefaultStringMap(m map[string]interface{}, key string) (map[string]int
 	return map[string]interface{}{}, nil
 }
 
-func getOrError(m map[string]interface{}, key string) (string, error) {
-	value := m[key]
-	if value != nil {
-		return cast.ToStringE(value)
-	}
-	return "", fmt.Errorf("value for %s is not set", key)
-}
-
 func isOverwriteProhibitedError(err error) bool {
 	return strings.Contains(err.Error(), "delete them before reconfiguring")
 }
 
-func getMountConfigInput(secretEngine map[string]interface{}) (api.MountConfigInput, error) {
-	var mountConfigInput api.MountConfigInput
-	config, ok := secretEngine["config"]
-	if ok {
-		if err := mapstructure.Decode(config, &mountConfigInput); err != nil {
-			return mountConfigInput, fmt.Errorf("error parsing config for secret engine: %s", err.Error())
-		}
-	}
-
+func getMountConfigInput(secretEngine VaultSecretEngine) api.MountConfigInput {
 	// Bank-Vaults supported options outside config to be used options in the mount request
 	// so for now, to preserve backward compatibility we overwrite the options inside config
 	// with the options outside.
-	options, err := getOrDefaultStringMapString(secretEngine, "options")
-	if err != nil {
-		return mountConfigInput, fmt.Errorf("error getting options for secret engine: %s", err.Error())
-	}
-	mountConfigInput.Options = options
+	secretEngine.Config.Options = secretEngine.Options
 
-	return mountConfigInput, nil
+	return secretEngine.Config
 }
 
 func isConfigNoNeedName(secretEngineType string, configOption string) bool {
