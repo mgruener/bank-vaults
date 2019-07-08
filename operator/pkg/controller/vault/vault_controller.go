@@ -558,12 +558,7 @@ func secretForEtcd(e *etcdv1beta2.EtcdCluster) (*corev1.Secret, error) {
 		return nil, err
 	}
 
-	secret := &corev1.Secret{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "v1",
-			Kind:       "Secret",
-		},
-	}
+	secret := &corev1.Secret{}
 	secret.Name = e.Name + "-tls"
 	secret.Namespace = e.Namespace
 	secret.Labels = labelsForVault(e.Name)
@@ -635,10 +630,6 @@ func serviceForVault(v *vaultv1alpha1.Vault) *corev1.Service {
 	servicePorts = append(servicePorts, corev1.ServicePort{Name: "metrics", Port: 9091})
 	servicePorts = append(servicePorts, corev1.ServicePort{Name: "statsd", Port: 9102})
 	service := &corev1.Service{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "v1",
-			Kind:       "Service",
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        v.Name,
 			Namespace:   v.Namespace,
@@ -756,10 +747,6 @@ func perInstanceServicesForVault(v *vaultv1alpha1.Vault) []*corev1.Service {
 		ls[appsv1.StatefulSetPodNameLabel] = podName
 
 		service := &corev1.Service{
-			TypeMeta: metav1.TypeMeta{
-				APIVersion: "v1",
-				Kind:       "Service",
-			},
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        podName,
 				Namespace:   v.Namespace,
@@ -788,10 +775,6 @@ func serviceForVaultConfigurer(v *vaultv1alpha1.Vault) *corev1.Service {
 	serviceName := fmt.Sprintf("%s-configurer", v.Name)
 
 	service := &corev1.Service{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "v1",
-			Kind:       "Service",
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        serviceName,
 			Namespace:   v.Namespace,
@@ -810,10 +793,6 @@ func serviceForVaultConfigurer(v *vaultv1alpha1.Vault) *corev1.Service {
 func ingressForVault(v *vaultv1alpha1.Vault) *v1beta1.Ingress {
 	if ingress := v.GetIngress(); ingress != nil {
 		return &v1beta1.Ingress{
-			TypeMeta: metav1.TypeMeta{
-				APIVersion: "extensions/v1beta1",
-				Kind:       "Ingress",
-			},
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        v.Name,
 				Namespace:   v.Namespace,
@@ -923,10 +902,6 @@ func deploymentForConfigurer(v *vaultv1alpha1.Vault, configmaps corev1.ConfigMap
 	}
 
 	dep := &appsv1.Deployment{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "apps/v1",
-			Kind:       "Deployment",
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        v.Name + "-configurer",
 			Namespace:   v.Namespace,
@@ -951,10 +926,6 @@ func deploymentForConfigurer(v *vaultv1alpha1.Vault, configmaps corev1.ConfigMap
 func configMapForConfigurer(v *vaultv1alpha1.Vault) *corev1.ConfigMap {
 	ls := labelsForVaultConfigurer(v.Name)
 	cm := &corev1.ConfigMap{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "v1",
-			Kind:       "ConfigMap",
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      v.Name + "-configurer",
 			Namespace: v.Namespace,
@@ -972,12 +943,7 @@ func secretForVault(om *vaultv1alpha1.Vault) (*corev1.Secret, time.Time, error) 
 		return nil, time.Time{}, err
 	}
 
-	secret := &corev1.Secret{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "v1",
-			Kind:       "Secret",
-		},
-	}
+	secret := &corev1.Secret{}
 	secret.Name = om.Name + "-tls"
 	secret.Namespace = om.Namespace
 	secret.Labels = withVaultLabels(om, labelsForVault(om.Name))
@@ -1171,10 +1137,6 @@ func statefulSetForVault(v *vaultv1alpha1.Vault, externalSecretsToWatchItems []c
 	}
 
 	dep := &appsv1.StatefulSet{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "apps/v1",
-			Kind:       "StatefulSet",
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        v.Name,
 			Namespace:   v.Namespace,
@@ -1326,10 +1288,6 @@ func withTLSVolumeMount(v *vaultv1alpha1.Vault, volumeMounts []corev1.VolumeMoun
 func configMapForStatsD(v *vaultv1alpha1.Vault) *corev1.ConfigMap {
 	ls := labelsForVault(v.Name)
 	cm := &corev1.ConfigMap{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "v1",
-			Kind:       "ConfigMap",
-		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      v.Name + "-statsd-mapping",
 			Namespace: v.Namespace,
@@ -1647,12 +1605,7 @@ func asOwner(v *vaultv1alpha1.Vault) metav1.OwnerReference {
 
 // podList returns a v1.PodList object
 func podList() *corev1.PodList {
-	return &corev1.PodList{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       "Pod",
-			APIVersion: "v1",
-		},
-	}
+	return &corev1.PodList{}
 }
 
 // getPodNames returns the pod names of the array of pods passed in

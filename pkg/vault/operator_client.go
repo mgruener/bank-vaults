@@ -359,17 +359,17 @@ type VaultAuthMethod struct {
 	Config      map[string]interface{}
 	Roles       []map[string]interface{}
 
-	VaultAWSAuthMethod              `mapstructure:",squash"`
-	VaultGithubAuthMethod           `mapstructure:",squash"`
-	VaultAuthMethodUserGroupMapping `mapstructure:",squash"`
+	VaultAWSAuthMethod              `json:",inline" mapstructure:",squash"`
+	VaultGithubAuthMethod           `json:",inline" mapstructure:",squash"`
+	VaultAuthMethodUserGroupMapping `json:",inline" mapstructure:",squash"`
 }
 
 type VaultGithubAuthMethod struct {
-	Mappings map[string]map[string]string `mapstructure:"map"`
+	Mappings map[string]map[string]string `json:"map" mapstructure:"map"`
 }
 
 type VaultAWSAuthMethod struct {
-	STSRoles []map[string]interface{} `mapstructure:"sts_roles"`
+	STSRoles []map[string]interface{} `json:"sts_roles" mapstructure:"sts_roles"`
 }
 
 type VaultAuthMethodUserGroupMapping struct {
@@ -381,16 +381,16 @@ type VaultSecretEngine struct {
 	Type          string
 	Path          string
 	Description   string
-	PluginName    string `mapstructure:"plugin_name"`
+	PluginName    string `json:"plugin_name" mapstructure:"plugin_name"`
 	Local         bool
-	SealWrap      bool `mapstructure:"seal_wrap"`
+	SealWrap      bool `json:"seal_wrap"  mapstructure:"seal_wrap"`
 	Config        api.MountConfigInput
 	Options       map[string]string
 	Configuration map[string][]map[string]interface{}
 }
 
 type VaultPlugin struct {
-	Name    string `mapstructure:"plugin_name"`
+	Name    string `json:"plugin_name" mapstructure:"plugin_name"`
 	Type    string
 	Command string
 	Args    []string
@@ -421,16 +421,16 @@ type VaultIdentityGroupAlias struct {
 	Group     string
 }
 
-type VaultExternalConfig struct {
-	Policies       []VaultPolicy        `mapstructure:"policies"`
-	AuthMethods    []VaultAuthMethod    `mapstructure:"auth"`
-	SecretEngines  []VaultSecretEngine  `mapstructure:"secrets"`
-	Plugins        []VaultPlugin        `mapstructure:"plugins"`
-	AuditDevices   []VaultAuditDevice   `mapstructure:"audit"`
-	StartupSecrets []VaultStartupSecret `mapstructure:"startupSecrets"`
+type ExternalConfig struct {
+	Policies       []VaultPolicy        `json:"policies" mapstructure:"policies"`
+	AuthMethods    []VaultAuthMethod    `json:"auth" mapstructure:"auth"`
+	SecretEngines  []VaultSecretEngine  `json:"secrets" mapstructure:"secrets"`
+	Plugins        []VaultPlugin        `json:"plugins" mapstructure:"plugins"`
+	AuditDevices   []VaultAuditDevice   `json:"audit" mapstructure:"audit"`
+	StartupSecrets []VaultStartupSecret `json:"startupSecrets" mapstructure:"startupSecrets"`
 
-	Groups       []VaultIdentityGroup      `mapstructure:"groups"`
-	GroupAliases []VaultIdentityGroupAlias `mapstructure:"group-aliases"`
+	Groups       []VaultIdentityGroup      `json:"groups" mapstructure:"groups"`
+	GroupAliases []VaultIdentityGroupAlias `json:"group-aliases" mapstructure:"group-aliases"`
 }
 
 func (v *vault) Configure(rawExternalConfig *viper.Viper) error {
@@ -448,7 +448,7 @@ func (v *vault) Configure(rawExternalConfig *viper.Viper) error {
 	defer v.cl.SetToken("")
 	defer func() { rootToken = nil }()
 
-	var externalConfig VaultExternalConfig
+	var externalConfig ExternalConfig
 
 	err = rawExternalConfig.UnmarshalExact(&externalConfig)
 	if err != nil {
