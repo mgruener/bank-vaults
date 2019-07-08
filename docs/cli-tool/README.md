@@ -322,7 +322,7 @@ secrets:
 # the configuration files for the groups and group-aliases need to be parsed after the 
 # authentication backend has already mounted. Ideally they should be in the same file to avoid 
 # risk of errors
-groups: 
+groups:
   - name: admin
     policies:
       - admin

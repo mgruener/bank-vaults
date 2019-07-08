@@ -72,6 +72,9 @@ require (
 	github.com/mattn/go-sqlite3 v1.10.0 // indirect
 	github.com/microcosm-cc/bluemonday v0.0.0-20180327211928-995366fdf961 // indirect
 	github.com/mitchellh/mapstructure v1.1.2
+	github.com/mitchellh/mapstructure v1.1.2 // indirect
+	github.com/onsi/ginkgo v1.7.0 // indirect
+	github.com/onsi/gomega v1.4.3 // indirect
 	github.com/opencontainers/go-digest v1.0.0-rc1 // indirect
 	github.com/opencontainers/image-spec v1.0.1
 	github.com/operator-framework/operator-sdk v0.7.0
