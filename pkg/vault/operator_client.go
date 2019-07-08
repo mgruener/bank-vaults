@@ -348,8 +348,8 @@ func (v *vault) StepDownActive(address string) error {
 }
 
 type VaultPolicy struct {
-	Name  string
-	Rules string
+	Name  string `json:"name" mapstructure:"name"`
+	Rules string `json:"rules" mapstructure:"rules"`
 }
 
 type VaultAuthMethod struct {
@@ -422,15 +422,14 @@ type VaultIdentityGroupAlias struct {
 }
 
 type ExternalConfig struct {
-	Policies       []VaultPolicy        `json:"policies" mapstructure:"policies"`
-	AuthMethods    []VaultAuthMethod    `json:"auth" mapstructure:"auth"`
-	SecretEngines  []VaultSecretEngine  `json:"secrets" mapstructure:"secrets"`
-	Plugins        []VaultPlugin        `json:"plugins" mapstructure:"plugins"`
-	AuditDevices   []VaultAuditDevice   `json:"audit" mapstructure:"audit"`
-	StartupSecrets []VaultStartupSecret `json:"startupSecrets" mapstructure:"startupSecrets"`
-
-	Groups       []VaultIdentityGroup      `json:"groups" mapstructure:"groups"`
-	GroupAliases []VaultIdentityGroupAlias `json:"group-aliases" mapstructure:"group-aliases"`
+	Policies       []VaultPolicy             `json:"policies,omitempty" mapstructure:"policies"`
+	AuthMethods    []VaultAuthMethod         `json:"auth,omitempty" mapstructure:"auth"`
+	SecretEngines  []VaultSecretEngine       `json:"secrets,omitempty" mapstructure:"secrets"`
+	Plugins        []VaultPlugin             `json:"plugins,omitempty" mapstructure:"plugins"`
+	AuditDevices   []VaultAuditDevice        `json:"audit,omitempty" mapstructure:"audit"`
+	StartupSecrets []VaultStartupSecret      `json:"startupSecrets,omitempty" mapstructure:"startupSecrets"`
+	Groups         []VaultIdentityGroup      `json:"groups,omitempty" mapstructure:"groups"`
+	GroupAliases   []VaultIdentityGroupAlias `json:"group-aliases,omitempty" mapstructure:"group-aliases"`
 }
 
 func (v *vault) Configure(rawExternalConfig *viper.Viper) error {
