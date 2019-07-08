@@ -1125,7 +1125,7 @@ func getVaultAuthMountAccessor(path string, client *api.Client) (accessor string
 	return mounts[path].Accessor, nil
 }
 
-func getVaultGroupId(group string, client *api.Client) (id string, err error) {
+func getVaultGroupID(group string, client *api.Client) (id string, err error) {
 	g, err := readVaultGroup(group, client)
 	if err != nil {
 		return "", fmt.Errorf("error reading group %s: %s", group, err)
@@ -1136,13 +1136,13 @@ func getVaultGroupId(group string, client *api.Client) (id string, err error) {
 	return g.Data["id"].(string), nil
 }
 
-func getVaultGroupAliasName(aliasId string, client *api.Client) (id string, err error) {
-	alias, err := readVaultGroupAlias(aliasId, client)
+func getVaultGroupAliasName(aliasID string, client *api.Client) (id string, err error) {
+	alias, err := readVaultGroupAlias(aliasID, client)
 	if err != nil {
-		return "", fmt.Errorf("error reading group alias %s: %s", aliasId, err)
+		return "", fmt.Errorf("error reading group alias %s: %s", aliasID, err)
 	}
 	if alias == nil {
-		return "", fmt.Errorf("group alias %s does not exist", aliasId)
+		return "", fmt.Errorf("group alias %s does not exist", aliasID)
 	}
 	return alias.Data["name"].(string), nil
 }
@@ -1217,7 +1217,7 @@ func (v *vault) configureIdentityGroups(groups []VaultIdentityGroup, groupAliase
 			return fmt.Errorf("error getting mount accessor for %s: %s", groupAlias.Mountpath, err)
 		}
 
-		id, err := getVaultGroupId(groupAlias.Group, v.cl)
+		id, err := getVaultGroupID(groupAlias.Group, v.cl)
 		if err != nil {
 			return fmt.Errorf("error getting canonical_id for group %s: %s", groupAlias.Group, err)
 		}
