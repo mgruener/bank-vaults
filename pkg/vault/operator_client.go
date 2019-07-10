@@ -528,7 +528,6 @@ func (v *vault) kubernetesAuthConfigDefault() (map[string]interface{}, error) {
 func (v *vault) configureAuthMethods(authMethods []VaultAuthMethod) error {
 
 	existingAuths, err := v.cl.Sys().ListAuth()
-
 	if err != nil {
 		return fmt.Errorf("error listing auth backends vault: %s", err.Error())
 	}
