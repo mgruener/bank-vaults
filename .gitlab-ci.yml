@@ -1,0 +1,29 @@
+---
+variables:
+  DOCKER_DRIVER: overlay
+  DOCKER_TLS_CERTDIR: ""
+
+stages:
+  - build
+
+build-image:
+  image: registry-group.mgmtbi.ch/docker:stable
+  services:
+    - name: registry-group.mgmtbi.ch/docker:dind
+      alias: docker
+  stage: build
+  variables:
+    DOCKER_HOST: tcp://docker:2375/
+  tags:
+    - privileged
+    - build
+  script:
+    - apk add --no-cache bash curl make git
+    - export no_proxy="${no_proxy},docker"
+    - export NO_PROXY="${NO_PROXY},docker"
+    - mkdir ~/.docker
+    - echo "$DOCKER_AUTH_CONFIG" >  ~/.docker/config.json
+    - make docker-webhook
+    - make docker-webhook-push
+  only:
+    - branches

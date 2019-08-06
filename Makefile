@@ -4,8 +4,8 @@ OS = $(shell uname)
 
 # Project variables
 PACKAGE = github.com/banzaicloud/bank-vaults
-BINARY_NAME ?= bank-vaults
-DOCKER_REGISTRY ?= banzaicloud
+BINARY_NAME = bank-vaults
+DOCKER_REGISTRY = registry.mgmtbi.ch/rb8f/banzaicloud
 DOCKER_IMAGE = ${DOCKER_REGISTRY}/bank-vaults
 WEBHOOK_DOCKER_IMAGE = ${DOCKER_REGISTRY}/vault-secrets-webhook
 OPERATOR_DOCKER_IMAGE = ${DOCKER_REGISTRY}/vault-operator
@@ -14,15 +14,15 @@ VAULT_ENV_DOCKER_IMAGE = ${DOCKER_REGISTRY}/vault-env
 # Build variables
 BUILD_DIR ?= build
 BUILD_PACKAGE = ${PACKAGE}/cmd/...
-VERSION ?= $(shell echo `git symbolic-ref -q --short HEAD || git describe --tags --exact-match` | tr '[/]' '-')
+VERSION = ${CI_COMMIT_REF_SLUG}
 COMMIT_HASH ?= $(shell git rev-parse --short HEAD 2>/dev/null)
 BUILD_DATE ?= $(shell date +%FT%T%z)
 LDFLAGS += -X main.version=${VERSION} -X main.commitHash=${COMMIT_HASH} -X main.buildDate=${BUILD_DATE}
 export CGO_ENABLED ?= 0
-export GOOS = $(shell go env GOOS)
-ifeq (${VERBOSE}, 1)
-	GOARGS += -v
-endif
+#export GOOS = $(shell go env GOOS)
+#ifeq (${VERBOSE}, 1)
+#	GOARGS += -v
+#endif
 
 # Docker variables
 DOCKER_TAG ?= ${VERSION}
@@ -70,6 +70,13 @@ docker-webhook: ## Build a Docker-webhook image
 	docker build -t ${WEBHOOK_DOCKER_IMAGE}:${DOCKER_TAG} -f Dockerfile.webhook .
 ifeq (${DOCKER_LATEST}, 1)
 	docker tag ${WEBHOOK_DOCKER_IMAGE}:${DOCKER_TAG} ${WEBHOOK_DOCKER_IMAGE}:latest
+endif
+
+.PHONY: docker-webhook-push
+docker-webhook-push: ## Push a Docker image for the Webhook
+	docker push ${WEBHOOK_DOCKER_IMAGE}:${DOCKER_TAG}
+ifeq (${DOCKER_LATEST}, 1)
+	docker push ${WEBHOOK_DOCKER_IMAGE}:latest
 endif
 
 .PHONY: docker-vault-env
